@@ -13,7 +13,7 @@
 주의: GitHub Actions에서 실행(requests 필요). 사내망 오프라인 로컬에선 실행 불가 — 문법검증만 가능.
 사용: python fetch_weather.py [--start 2022-01-01] [--end auto]
 """
-import json, csv, os, argparse, math, datetime as dt
+import json, csv, os, argparse, math, time, datetime as dt
 from collections import defaultdict
 
 try:
@@ -37,33 +37,49 @@ def abs_humidity_gkg(t_c, rh_pct, p_hpa=1013.25):
     return w * 1000.0                                     # g/kg
 
 
+def _get_json(params, tries=3, timeout=60):
+    """일시적 오류(타임아웃 등) 재시도 포함 GET."""
+    last = None
+    for attempt in range(tries):
+        try:
+            r = requests.get(ARCHIVE, params=params, timeout=timeout)
+            r.raise_for_status()
+            return r.json()
+        except Exception as ex:  # noqa
+            last = ex
+            time.sleep(3 * (attempt + 1))
+    raise last
+
+
 def fetch_daily(lat, lon, start, end):
-    """일별 평균기온 + 습도(상대습도로부터 절대습도) 반환: {date: (t_mean, ah_mean)}."""
-    params = {
-        "latitude": lat, "longitude": lon,
-        "start_date": start, "end_date": end,
-        "daily": "temperature_2m_mean",
-        "hourly": "temperature_2m,relative_humidity_2m",
-        "timezone": "UTC",
-    }
-    r = requests.get(ARCHIVE, params=params, timeout=120)
-    r.raise_for_status()
-    j = r.json()
+    """연 단위로 나눠 시간별(기온·상대습도)을 받아 일별 평균기온·절대습도로 집계.
+    반환 {date: [t_mean, ah_mean]}. (요청 분할로 타임아웃 방지)"""
     out = {}
-    # 일평균기온
-    d = j.get("daily", {})
-    for day, tm in zip(d.get("time", []), d.get("temperature_2m_mean", [])):
-        out[day] = [tm, None]
-    # 시간별 → 일별 절대습도 평균
-    h = j.get("hourly", {})
-    acc = defaultdict(list)
-    for ts, t, rh in zip(h.get("time", []), h.get("temperature_2m", []), h.get("relative_humidity_2m", [])):
-        ah = abs_humidity_gkg(t, rh)
-        if ah is not None:
-            acc[ts[:10]].append(ah)
-    for day, arr in acc.items():
-        if day in out:
-            out[day][1] = sum(arr) / len(arr)
+    y0, y1 = int(start[:4]), int(end[:4])
+    for yr in range(y0, y1 + 1):
+        s = max(start, f"{yr}-01-01")
+        e = min(end, f"{yr}-12-31")
+        params = {
+            "latitude": lat, "longitude": lon,
+            "start_date": s, "end_date": e,
+            "hourly": "temperature_2m,relative_humidity_2m",
+            "timezone": "UTC",
+        }
+        j = _get_json(params)
+        h = j.get("hourly", {})
+        tacc, aacc = defaultdict(list), defaultdict(list)
+        for ts, t, rh in zip(h.get("time", []), h.get("temperature_2m", []),
+                             h.get("relative_humidity_2m", [])):
+            day = ts[:10]
+            if t is not None:
+                tacc[day].append(t)
+            ah = abs_humidity_gkg(t, rh)
+            if ah is not None:
+                aacc[day].append(ah)
+        for day in tacc:
+            tmean = sum(tacc[day]) / len(tacc[day]) if tacc[day] else None
+            amean = sum(aacc[day]) / len(aacc[day]) if aacc[day] else None
+            out[day] = [tmean, amean]
     return out
 
 
