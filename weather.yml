@@ -1,0 +1,32 @@
+name: Weather Harvester (Energy Forecast)
+
+# 법인 위치별 월별 기상 특성치(HDD/CDD/절대습도/잠열도일)를 Open-Meteo에서 수집.
+# 산출물은 비민감(공개 기상) → 아티팩트로 내려받아 로컬 모델링에 사용.
+# 에너지·생산 실적 등 민감 데이터는 이 리포에 두지 않는다.
+
+on:
+  workflow_dispatch: {}          # 수동 실행
+  schedule:
+    - cron: '0 20 5 * *'         # 매월 5일 05:00 KST — 전월 실측 확정 후 갱신
+
+jobs:
+  harvest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install -r requirements.txt
+      - run: python fetch_weather.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: weather-csv
+          path: data/weather_*.csv
+      # 리포에 이력으로 커밋(선택). 원치 않으면 아래 블록 삭제.
+      - name: Commit weather data
+        run: |
+          git config user.name  "weather-bot"
+          git config user.email "weather-bot@users.noreply.github.com"
+          git add data/weather_*.csv
+          git commit -m "chore: update weather data $(date -u +%Y-%m-%d)" || echo "no change"
+          git push || echo "push skipped"
