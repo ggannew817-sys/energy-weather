@@ -1,0 +1,22 @@
+{
+  "_comment": "14개 법인 위치 좌표. HD·HG는 부지 근사치 → 확정 좌표로 검증 필요(verify:true).",
+  "_base_hdd_C": 18.0,
+  "_base_cdd_C": 18.0,
+  "_base_ldd_gkg": 10.0,
+  "plants": [
+    {"code": "OC",  "name": "오창(한국 충북)",        "lat": 36.720, "lon": 127.430, "verify": false},
+    {"code": "NJ",  "name": "난징(중국 장쑤)",         "lat": 31.950, "lon": 118.790, "verify": false},
+    {"code": "NA",  "name": "난징(중국 장쑤)",         "lat": 31.950, "lon": 118.790, "verify": false},
+    {"code": "NB",  "name": "난징(중국 장쑤)",         "lat": 31.950, "lon": 118.790, "verify": false},
+    {"code": "WA",  "name": "브로츠와프(폴란드)",       "lat": 51.107, "lon": 17.038, "verify": false},
+    {"code": "MIH", "name": "홀랜드(미 미시간)",        "lat": 42.787, "lon": -86.109, "verify": false},
+    {"code": "MIL", "name": "랜싱(미 미시간)",          "lat": 42.732, "lon": -84.556, "verify": false},
+    {"code": "AZ",  "name": "퀸크릭(미 애리조나)",      "lat": 33.249, "lon": -111.634, "verify": false},
+    {"code": "HM",  "name": "카라왕(인니 서부자바)",    "lat": -6.302, "lon": 107.302, "verify": false},
+    {"code": "GM1", "name": "워렌(미 오하이오)",        "lat": 41.238, "lon": -80.818, "verify": false},
+    {"code": "GM2", "name": "스프링힐(미 테네시)",      "lat": 35.751, "lon": -86.930, "verify": false},
+    {"code": "OT",  "name": "윈저(캐나다 온타리오)",    "lat": 42.309, "lon": -83.036, "verify": false},
+    {"code": "HD",  "name": "파예트 카운티(미 오하이오)","lat": 39.650, "lon": -83.560, "verify": true},
+    {"code": "HG",  "name": "브라이언 카운티(미 조지아)","lat": 32.130, "lon": -81.420, "verify": true}
+  ]
+}
