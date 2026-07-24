@@ -116,59 +116,89 @@ def last_full_month_end():
     return last_prev.isoformat()
 
 
+FIELDS = ["t_mean", "hdd_15", "hdd_18", "cdd_18", "cdd_22", "ah_mean", "ldd"]
+
+
+def load_cached_monthly(path):
+    """레포에 커밋돼 있던 기존 weather_monthly.csv → {(plant,ym):{field:val}}."""
+    rows = {}
+    if os.path.exists(path):
+        for r in csv.DictReader(open(path, encoding="utf-8-sig")):
+            rows[(r["plant"], r["month"])] = {f: r.get(f, "") for f in FIELDS}
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--start", default="2022-01-01")
+    ap.add_argument("--start", default="2022-01-01")            # 최초(캐시 없을 때) 전체 시작
     ap.add_argument("--end", default=None)
+    ap.add_argument("--refresh-from", dest="refresh_from", default=None,
+                    help="이 월(YYYY-MM)부터만 새로 수집, 이전은 캐시 재사용. 기본=올해 01월")
+    ap.add_argument("--full", action="store_true", help="캐시 무시하고 전체 재수집")
     args = ap.parse_args()
     if requests is None:
         raise SystemExit("requests 미설치 — GitHub Actions에서 실행하세요(로컬 사내망은 오프라인).")
 
     cfg = json.load(open(os.path.join(HERE, "plants.json"), encoding="utf-8"))
     base_hdd = cfg["_base_hdd_C"]; base_cdd = cfg["_base_cdd_C"]; base_ldd = cfg["_base_ldd_gkg"]
-    end = args.end or dt.date.today().isoformat()   # 이번 달 부분치까지 포함 → 매일 갱신(완결월만 원하면 --end 지정)
+    today = dt.date.today()
+    end = args.end or today.isoformat()                        # 이번 달 부분치까지 포함
+    refresh_from = args.refresh_from or f"{today.year}-01"      # 올해분만 매일 재수집
 
-    FIELDS = ["t_mean", "hdd_15", "hdd_18", "cdd_18", "cdd_22", "ah_mean", "ldd"]
-    monthly_rows = []
-    normals = defaultdict(lambda: defaultdict(list))  # code -> mm -> {field:[..]}
+    outdir = os.path.join(HERE, "data")
+    os.makedirs(outdir, exist_ok=True)
+    monthly_path = os.path.join(outdir, "weather_monthly.csv")
+
+    cached = {} if args.full else load_cached_monthly(monthly_path)
+    use_cache = len(cached) > 0
+    fetch_start = (refresh_from + "-01") if use_cache else args.start
+
+    merged = {}   # (code, ym) -> {field:val}
+    if use_cache:
+        for (code, ym), vals in cached.items():
+            if ym < refresh_from:                              # 과거(안 변함)는 캐시 보존
+                merged[(code, ym)] = vals
+        print(f"[증분] 캐시 {len(merged)}행 보존(<{refresh_from}) · {refresh_from}~{end[:7]}만 재수집", flush=True)
+    else:
+        print(f"[전체] 캐시 없음 → {fetch_start}~{end} 전체 수집(최초 1회 오래 걸림)", flush=True)
 
     for pl in cfg["plants"]:
         code = pl["code"]
-        print(f"[{code}] {pl['name']} 수집 {args.start}~{end} ...", flush=True)
-        daily = fetch_daily(pl["lat"], pl["lon"], args.start, end)
+        print(f"[{code}] {pl['name']} 수집 {fetch_start}~{end} ...", flush=True)
+        daily = fetch_daily(pl["lat"], pl["lon"], fetch_start, end)
         feats = monthly_features(daily, base_hdd, base_cdd, base_ldd)
-        for ym in sorted(feats):
-            row = {"plant": code, "month": ym}
-            row.update(feats[ym])
-            monthly_rows.append(row)
-            mm = ym[5:7]
-            for f in FIELDS:
-                val = feats[ym][f]
-                if val != "":
-                    normals[code][mm].append((f, val))
+        for ym in sorted(feats):                               # 새로 받은 달로 갱신/추가
+            merged[(code, ym)] = {f: feats[ym][f] for f in FIELDS}
 
-    outdir = os.path.join(HERE, "data")   # 리포 루트(weather-service) 내부에 산출
-    os.makedirs(outdir, exist_ok=True)
-
-    with open(os.path.join(outdir, "weather_monthly.csv"), "w", newline="", encoding="utf-8-sig") as f:
+    # weather_monthly.csv (병합 결과)
+    with open(monthly_path, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=["plant", "month"] + FIELDS)
-        w.writeheader(); w.writerows(monthly_rows)
+        w.writeheader()
+        for (code, ym) in sorted(merged, key=lambda k: (k[0], k[1])):
+            row = {"plant": code, "month": ym}; row.update(merged[(code, ym)])
+            w.writerow(row)
 
-    # 평년값: 법인×월(01~12) 평균
+    # 평년값: 법인×월(01~12) 평균 — 병합 전체(과거+최신)에서 계산
+    normals = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    for (code, ym), vals in merged.items():
+        mm = ym[5:7]
+        for fld in FIELDS:
+            v = vals.get(fld, "")
+            if v not in ("", None):
+                try: normals[code][mm][fld].append(float(v))
+                except (TypeError, ValueError): pass
     with open(os.path.join(outdir, "weather_normals.csv"), "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=["plant", "mm"] + FIELDS)
         w.writeheader()
         for code in [p["code"] for p in cfg["plants"]]:
             for mm in [f"{i:02d}" for i in range(1, 13)]:
-                bucket = defaultdict(list)
-                for fld, val in normals[code].get(mm, []):
-                    bucket[fld].append(val)
                 row = {"plant": code, "mm": mm}
                 for fld in FIELDS:
-                    row[fld] = round(sum(bucket[fld]) / len(bucket[fld]), 3) if bucket[fld] else ""
+                    b = normals[code][mm][fld]
+                    row[fld] = round(sum(b) / len(b), 3) if b else ""
                 w.writerow(row)
 
-    print(f"\n완료: weather_monthly.csv {len(monthly_rows)}행, weather_normals.csv 생성 ({outdir})")
+    print(f"\n완료: weather_monthly.csv {len(merged)}행, weather_normals.csv 생성 ({outdir})")
 
 
 if __name__ == "__main__":
