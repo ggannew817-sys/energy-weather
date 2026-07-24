@@ -126,7 +126,7 @@ def main():
 
     cfg = json.load(open(os.path.join(HERE, "plants.json"), encoding="utf-8"))
     base_hdd = cfg["_base_hdd_C"]; base_cdd = cfg["_base_cdd_C"]; base_ldd = cfg["_base_ldd_gkg"]
-    end = args.end or last_full_month_end()
+    end = args.end or dt.date.today().isoformat()   # 이번 달 부분치까지 포함 → 매일 갱신(완결월만 원하면 --end 지정)
 
     FIELDS = ["t_mean", "hdd_15", "hdd_18", "cdd_18", "cdd_22", "ah_mean", "ldd"]
     monthly_rows = []
