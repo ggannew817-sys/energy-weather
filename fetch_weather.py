@@ -64,6 +64,7 @@ def fetch_daily(lat, lon, start, end):
             "start_date": s, "end_date": e,
             "hourly": "temperature_2m,relative_humidity_2m",
             "timezone": "UTC",
+            "models" : "era5_seamless",
         }
         j = _get_json(params)
         h = j.get("hourly", {})
