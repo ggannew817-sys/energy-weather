@@ -64,7 +64,8 @@ def fetch_daily(lat, lon, start, end):
             "start_date": s, "end_date": e,
             "hourly": "temperature_2m,relative_humidity_2m",
             "timezone": "UTC",
-            "models" : "era5_seamless",
+            # 고해상도: ERA5-Land(≈9km)가 있으면 그걸, 없으면 ERA5(≈25km)로 자동 결합(육지·해안 이음매 없음).
+            "models": "era5_seamless",
         }
         j = _get_json(params)
         h = j.get("hourly", {})
@@ -80,22 +81,27 @@ def fetch_daily(lat, lon, start, end):
         for day in tacc:
             tmean = sum(tacc[day]) / len(tacc[day]) if tacc[day] else None
             amean = sum(aacc[day]) / len(aacc[day]) if aacc[day] else None
-            out[day] = [tmean, amean]
+            tmax = max(tacc[day]) if tacc[day] else None       # 일 최고기온(그날 시간별 최대) — 폭염 가시화용
+            out[day] = [tmean, amean, tmax]
     return out
 
 
 def monthly_features(daily, base_hdd, base_cdd, base_ldd):
     """일별 → 월별 특성치 집계."""
-    agg = defaultdict(lambda: {"t": [], "ah": []})
-    for day, (t, ah) in daily.items():
+    agg = defaultdict(lambda: {"t": [], "ah": [], "tmx": []})
+    for day, rec in daily.items():
+        t, ah = rec[0], rec[1]
+        tmx = rec[2] if len(rec) > 2 else None
         ym = day[:7]
         if t is not None:
             agg[ym]["t"].append(t)
         if ah is not None:
             agg[ym]["ah"].append(ah)
+        if tmx is not None:
+            agg[ym]["tmx"].append(tmx)
     rows = {}
     for ym, v in agg.items():
-        ts, ahs = v["t"], v["ah"]
+        ts, ahs, tmxs = v["t"], v["ah"], v["tmx"]
         if not ts:
             continue
         rows[ym] = {
@@ -106,6 +112,10 @@ def monthly_features(daily, base_hdd, base_cdd, base_ldd):
             "cdd_22": round(sum(max(0.0, t - 22) for t in ts), 1),
             "ah_mean": round(sum(ahs) / len(ahs), 3) if ahs else "",
             "ldd": round(sum(max(0.0, a - base_ldd) for a in ahs), 1) if ahs else "",
+            # 폭염 가시화 — 일평균 기반 CDD와 별개로 '일 최고기온' 관점 지표
+            "t_max": round(max(tmxs), 1) if tmxs else "",              # 그 달 최고기온(일최고 중 최대)
+            "hot30": sum(1 for x in tmxs if x >= 30) if tmxs else "",   # 일최고 ≥30℃ 일수
+            "hot35": sum(1 for x in tmxs if x >= 35) if tmxs else "",   # 일최고 ≥35℃ 일수
         }
     return rows
 
@@ -117,7 +127,7 @@ def last_full_month_end():
     return last_prev.isoformat()
 
 
-FIELDS = ["t_mean", "hdd_15", "hdd_18", "cdd_18", "cdd_22", "ah_mean", "ldd"]
+FIELDS = ["t_mean", "hdd_15", "hdd_18", "cdd_18", "cdd_22", "ah_mean", "ldd", "t_max", "hot30", "hot35"]
 
 
 def load_cached_monthly(path):
@@ -179,14 +189,16 @@ def main():
             row = {"plant": code, "month": ym}; row.update(merged[(code, ym)])
             w.writerow(row)
 
-    # 평년값: 법인×월(01~12) 평균 — 병합 전체(과거+최신)에서 계산
-    normals = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    # 평년값: 법인×월(01~12) — 최근 5개 연도 롤링 평균(온난화 반영·표본 안정 균형)
+    #  ⚠️ 이상치 자동제거는 미적용: 표본 5개에선 기온·경계월(0 근처) 정상변동을 극단으로 오판 → 표본↑ 후 도입.
+    RECENT_YEARS = 5
+    normals = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))  # code->mm->fld->[(year,val)]
     for (code, ym), vals in merged.items():
-        mm = ym[5:7]
+        mm = ym[5:7]; yr = ym[:4]
         for fld in FIELDS:
             v = vals.get(fld, "")
             if v not in ("", None):
-                try: normals[code][mm][fld].append(float(v))
+                try: normals[code][mm][fld].append((yr, float(v)))
                 except (TypeError, ValueError): pass
     with open(os.path.join(outdir, "weather_normals.csv"), "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=["plant", "mm"] + FIELDS)
@@ -195,7 +207,9 @@ def main():
             for mm in [f"{i:02d}" for i in range(1, 13)]:
                 row = {"plant": code, "mm": mm}
                 for fld in FIELDS:
-                    b = normals[code][mm][fld]
+                    pairs = normals[code][mm][fld]
+                    yrs = sorted({y for y, _ in pairs}, reverse=True)[:RECENT_YEARS]
+                    b = [v for y, v in pairs if y in yrs]
                     row[fld] = round(sum(b) / len(b), 3) if b else ""
                 w.writerow(row)
 
