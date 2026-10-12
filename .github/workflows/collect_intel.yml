@@ -1,0 +1,32 @@
+name: CAP Intel Harvester
+
+on:
+  schedule:
+    - cron: "30 22 * * 0-4"    # 평일 07:30 KST (UTC 전날 22:30) — 아침 동향 수집
+  workflow_dispatch:            # 수동 실행 버튼
+
+permissions:
+  contents: write
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 제도·시장 동향 수집
+        run: python fetch_intel.py
+      - name: 아티팩트 업로드 (로컬로 내려받아 CAP에 반영)
+        uses: actions/upload-artifact@v4
+        with:
+          name: intel_daily
+          path: intel_daily.json
+      - name: 레포에도 커밋(선택)
+        run: |
+          git config user.name "cap-intel-bot"
+          git config user.email "cap-intel-bot@users.noreply.github.com"
+          git add intel_daily.json
+          git commit -m "chore: 제도/시장 동향 자동수집 $(date +%F)" || echo "변경 없음"
+          git push || echo "push 스킵"
