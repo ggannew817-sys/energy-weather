@@ -1,0 +1,40 @@
+name: Weather Hourly Harvester (WA realtime model)
+
+# WA(폴란드) 법인의 시간별 기온·습도를 Open-Meteo에서 수집 — 실시간 전력 예측모델(realtime_peak)의
+# 외생요인(온도·습도) 입력용. 월별 하베스터(weather.yml)와는 별도 산출물(data/weather_hourly_wa.csv).
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: '수집 시작일(YYYY-MM-DD)'
+        default: '2026-06-01'
+      plant:
+        description: '법인 코드'
+        default: 'WA'
+  schedule:
+    - cron: '15 20 * * *'   # 매일 20:15 UTC(=익일 05:15 KST), 월별 수집 직후
+
+permissions:
+  contents: write
+
+jobs:
+  harvest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt
+      - run: python fetch_weather_hourly.py --start "${{ github.event.inputs.start || '2026-06-01' }}" --plant "${{ github.event.inputs.plant || 'WA' }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: weather-hourly-csv
+          path: data/weather_hourly_*.csv
+      - name: Commit hourly weather data
+        run: |
+          git config user.name  "weather-bot"
+          git config user.email "weather-bot@users.noreply.github.com"
+          git add data/weather_hourly_*.csv
+          git commit -m "chore: update hourly weather $(date -u +%F)" || echo "no change"
+          git push || echo "push skipped"
